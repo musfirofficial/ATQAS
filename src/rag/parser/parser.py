@@ -3,7 +3,7 @@ from pathlib import Path
 import pymupdf
 
 from rag.core.config import get_gemini_api_key
-from rag.exceptions import (
+from rag.core.exceptions import (
     ConfigError,
     IngestionError,
     QuotaExceededError,

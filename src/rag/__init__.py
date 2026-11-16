@@ -1,4 +1,5 @@
 from .chunking import create_chunks_from_dataset
+from .condense import condense_history, update_summary
 from .core.config import DEFAULT_COLLECTION_NAME, ROOT_DIR
 from .embedding import (
     embed_dense,
@@ -19,6 +20,7 @@ from .vector_store import (
 __all__ = [
     "DEFAULT_COLLECTION_NAME",
     "ROOT_DIR",
+    "condense_history",
     "create_chunks_from_dataset",
     "embed_dense",
     "embed_query_dense",
@@ -30,5 +32,6 @@ __all__ = [
     "parse_and_prepare_textbook",
     "prepare_qdrant_points",
     "query",
+    "update_summary",
     "upsert_chunks",
 ]

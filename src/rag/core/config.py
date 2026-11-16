@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq as NativeGroqClient
 
-from ..exceptions import ConfigError
+from .exceptions import ConfigError
 
 # ==============================================================================
 # # Paths
@@ -60,6 +60,7 @@ def get_gemini_api_key() -> str:
 
 
 GROQ_MAIN_MODEL = "openai/gpt-oss-120b"
+GROQ_CONDENSE_MODEL = "qwen/qwen3.8-27b"
 
 
 def get_groq_api_key() -> str:

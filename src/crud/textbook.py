@@ -14,16 +14,7 @@ async def create_textbook(
     collection_name: str,
     total_pages: int,
 ) -> TextBook:
-    new_textbook = TextBook(
-        title=textbook_in.title,
-        path=textbook_in.path,
-        grade=textbook_in.grade,
-        subject=textbook_in.subject,
-        medium=textbook_in.medium,
-        edition=str(textbook_in.edition) if textbook_in.edition is not None else None,
-        collection_name=collection_name,
-        total_pages=total_pages,
-    )
+    new_textbook = TextBook(**textbook_in.model_dump)
 
     db.add(new_textbook)  # Store in memory
     await db.commit()  # Commit to the database

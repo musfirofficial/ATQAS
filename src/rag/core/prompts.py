@@ -81,3 +81,37 @@ def main_prompt():
     2. Keep explanations structured, encouraging, and easy for high school and university students to study from.
     Question: {query_str}
     Tutor's Answer:"""
+
+
+# ==============================================================================
+# Condense Prompt for Continoues chat
+# ==============================================================================
+def condense_prompt() -> str:
+    return """Given the following chat history and a follow-up question from a student, rewrite the question into a single, standalone search query.
+The standalone query will be used to search textbook material, so it must include specific concepts, topics, or subjects mentioned earlier in the conversation.
+
+Rules:
+1. Output ONLY the standalone search query. Do NOT answer the question.
+2. Replace vague pronouns ("it", "this", "they", "that") with the specific topic being discussed.
+3. Keep subject-specific and scientific terminology accurate.
+4. If the question is already clear and standalone, return it as is.
+
+Chat History:
+{chat_history}
+
+Follow-up Question: {query_str}
+Standalone Search Query:"""
+
+
+# ==============================================================================
+# Condese summary chat
+# ==============================================================================
+def summary_prompt() -> str:
+    return r"""You are a concise conversation summarizer for a student learning system.
+Update the existing summary with the new conversation below in 2-3 short sentences.
+Focus ONLY on academic topics, key definitions, and student doubts discussed.
+Existing Summary:
+{current_summary}
+New Conversation to add:
+{chat_text}
+Updated Summary:"""
