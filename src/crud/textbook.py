@@ -4,21 +4,36 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import TextBook
-from ..schema.textbook import TextBookCreate
+from src.db.models import TextBook, TextBookStatus
 
 
-async def create_textbook(
+async def create_textbook_record(
     db: AsyncSession,
-    textbook_in: TextBookCreate,
-    collection_name: str,
+    title: str,
     total_pages: int,
+    collection_name: str,
+    grade: int | None = None,
+    subject: str | None = None,
+    medium: str = "english",
+    edition: str | None = None,
+    path: str | None = None,
+    status: TextBookStatus = TextBookStatus.READY,
 ) -> TextBook:
-    new_textbook = TextBook(**textbook_in.model_dump)
-
-    db.add(new_textbook)  # Store in memory
-    await db.commit()  # Commit to the database
-    await db.refresh(new_textbook)  # Refresh to get the new data from the database
+    """Inserts a new textbook record into the SQL database."""
+    new_textbook = TextBook(
+        title=title,
+        total_pages=total_pages,
+        collection_name=collection_name,
+        grade=grade,
+        subject=subject,
+        medium=medium,
+        edition=str(edition) if edition is not None else None,
+        path=path,
+        status=status,
+    )
+    db.add(new_textbook)
+    await db.commit()
+    await db.refresh(new_textbook)
     return new_textbook
 
 

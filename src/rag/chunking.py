@@ -12,24 +12,55 @@ SOURCE_FOLDER = ROOT_DIR / "data" / "extracted"
 
 
 def create_chunks_from_dataset(
-    dataset_path: str,
+    dataset_input: str | Path | dict | list[dict] | None = None,
     chunk_size: int = 400,
     overlap: int = 60,
+    title: str | None = None,
+    document_name: str | None = None,
+    dataset_path: str | Path | None = None,
 ):
     """
-    Takes an extracted textbook dataset JSON and splits it into safe,
-    metadata-enriched chunks ready for Dense + BM25 embedding in Qdrant.
-    Guarantees:
-    1. Zero truncation: Chunks stay strictly under 512 embedding token limits.
-    2. Zero syntax breaking: Markdown tables and $$ LaTeX blocks stay intact.
-    3. Full metadata preservation: Every chunk knows its book page and chapter.
+    Takes an extracted textbook dataset (file path, dict, or list of page dicts)
+    and splits it into safe, metadata-enriched chunks ready for Qdrant.
     """
+    input_data = dataset_input if dataset_input is not None else dataset_path
+    if input_data is None:
+        raise ValueError("Must provide either dataset_input or dataset_path")
 
-    path_obj = Path(dataset_path)
-    if not path_obj.exists():
-        raise FileNotFoundError(f"Dataset file not found at {dataset_path}")
-    with open(path_obj, "r", encoding="utf-8") as f:
-        pages: list[dict] = json.load(f)
+    book_title = title or document_name
+    meta: dict = {}
+
+    if isinstance(input_data, dict):
+        meta = input_data.get("metadata", {})
+        pages = input_data.get("pages", [])
+        name_for_stem = book_title or meta.get("title") or meta.get("document_name") or "textbook"
+        doc_stem = re.sub(r"[^\w\-]", "_", str(name_for_stem))
+        display_name = doc_stem
+    elif isinstance(input_data, list):
+        pages = input_data
+        name_for_stem = (
+            book_title
+            or (pages[0].get("title") or pages[0].get("document_name") if pages else "textbook")
+        )
+        doc_stem = re.sub(r"[^\w\-]", "_", str(name_for_stem))
+        display_name = doc_stem
+    else:
+        path_obj = Path(input_data)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Dataset file not found at {dataset_input}")
+        with open(path_obj, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+
+        if isinstance(raw_data, dict):
+            meta = raw_data.get("metadata", {})
+            pages = raw_data.get("pages", [])
+            first_title = meta.get("title") or meta.get("document_name")
+        else:
+            pages = raw_data
+            first_title = pages[0].get("title") or pages[0].get("document_name") if pages else None
+
+        doc_stem = re.sub(r"[^\w\-]", "_", str(book_title or first_title or path_obj.stem))
+        display_name = path_obj.name
 
     # 1. Convert pages in to LlamaIndex Documents
     documents: list[Document] = []
@@ -40,27 +71,28 @@ def create_chunks_from_dataset(
         if not text or page.get("chapter_title") == "Front Matter":
             continue
 
+        page_title = (
+            page.get("title")
+            or meta.get("title")
+            or page.get("document_name")
+            or meta.get("document_name")
+            or doc_stem
+        )
+
         doc = Document(
             text=text,
             metadata={
-                "document_name": page.get("document_name", path_obj.stem),
-                "grade": page.get("grade"),
-                "subject": page.get("subject"),
-                "medium": page.get("medium", "English"),
-                "edition": page.get("edition"),
+                "title": page_title,
+                "document_name": page_title,
+                "grade": page.get("grade") or meta.get("grade"),
+                "subject": page.get("subject") or meta.get("subject"),
+                "medium": page.get("medium") or meta.get("medium", "English"),
+                "edition": page.get("edition") or meta.get("edition"),
                 "pdf_page": page.get("pdf_page"),
                 "book_page": page.get("book_page"),
                 "chapter_number": page.get("chapter_number"),
                 "chapter_title": page.get("chapter_title"),
-                "has_figures": page.get("has_figures", False),
-                "has_tables": page.get("has_tables", False),
-                "extraction_method": page.get("extraction_method", "digital"),
             },
-            excluded_llm_metadata_keys=[
-                "has_figures",
-                "has_tables",
-                "extraction_method",
-            ],
         )
         documents.append(doc)
 
@@ -76,7 +108,6 @@ def create_chunks_from_dataset(
     raw_nodes = splitter.get_nodes_from_documents(documents)
 
     # 4. Enrich chunks: Deterministic IDs & Context Headers
-    doc_stem = re.sub(r"[^\w\-]", "_", path_obj.stem)
     page_chunk_counters: dict[int, int] = {}
     final_chunks: list[TextNode] = []
 
@@ -94,7 +125,7 @@ def create_chunks_from_dataset(
 
         final_chunks.append(node)
     print(
-        f"[CHUNKING SUCCESS] Dataset '{path_obj.name}' ({len(pages)} pages) "
+        f"[CHUNKING SUCCESS] Dataset '{display_name}' ({len(pages)} pages) "
         f"split into {len(final_chunks)} safe chunks."
     )
     return final_chunks

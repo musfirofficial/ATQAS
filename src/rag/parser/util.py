@@ -109,6 +109,42 @@ def find_toc_start_page(
 # ==============================================================================
 
 
+def extract_toc_with_groq_digital(
+    doc: pymupdf.Document, start_page: int, end_page: int
+) -> str:
+    """Extracts TOC JSON using Groq LLM on the digital text of the TOC pages."""
+    try:
+        from rag.core.config import GROQ_MAIN_MODEL, get_groq_client
+
+        client = get_groq_client()
+        combined_text = "\n\n".join(
+            doc[p].get_text() for p in range(start_page, min(end_page, len(doc)))
+        )
+        if not combined_text.strip():
+            return ""
+        prompt = (
+            "You are a textbook table of contents parser.\n"
+            "Extract the structured table of contents from the following textbook pages into a valid JSON array.\n"
+            "Each element must be an object with:\n"
+            '- "chapter_number": integer\n'
+            '- "title": clean string chapter title (do NOT include chapter number in title)\n'
+            '- "start_page": starting book page number as integer\n'
+            '- "end_page": ending book page number as integer (or null if not stated)\n\n'
+            "Return ONLY the raw JSON array [ ... ] with no markdown quotes, explanation, or extra keys.\n\n"
+            f"Textbook TOC Text:\n{combined_text}"
+        )
+        res = client.chat.completions.create(
+            model=GROQ_MAIN_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=2048,
+        )
+        return res.choices[0].message.content or ""
+    except Exception as e:
+        print(f"[WARNING] Groq digital TOC extraction failed: {e}")
+        return ""
+
+
 def extract_table_of_contents(
     doc: pymupdf.Document,
     max_search_pages: int = MAX_TOC_SEARCH_PAGES,
@@ -194,7 +230,7 @@ def extract_table_of_contents(
     content = ""
     for attempt in range(max_retries):
         try:
-            with httpx.Client(http2=True, timeout=60.0) as client:
+            with httpx.Client(http2=False, timeout=60.0) as client:
                 response = client.post(
                     GEMINI_API_URL,
                     json=payload,
@@ -222,24 +258,44 @@ def extract_table_of_contents(
                 print(f"[WARNING] Gemini TOC extraction connection error: {exc}")
 
     if not content:
-        return [], toc_start_page
+        print("[FALLBACK] Gemini TOC extraction unavailable. Falling back to Groq LLM with digital text...")
+        content = extract_toc_with_groq_digital(doc, toc_start_page, end_scan)
 
     # Parse JSON from model output
     chapters = []
-    try:
-        match = re.search(r"\[[\s\S]*\]", content)
-        if match:
-            chapters = json.loads(match.group(0))
-        else:
-            cleaned = content.strip()
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-            chapters = json.loads(cleaned)
-    except Exception as e:
-        print(f"[WARNING] Could not parse Gemini TOC JSON response: {e}")
-        return [], toc_start_page
+    if content:
+        try:
+            match = re.search(r"\[[\s\S]*\]", content)
+            if match:
+                chapters = json.loads(match.group(0))
+            else:
+                cleaned = content.strip()
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+                chapters = json.loads(cleaned)
+        except Exception as e:
+            print(f"[WARNING] Could not parse TOC JSON response: {e}")
 
-    if not isinstance(chapters, list):
+    # Fallback to PDF native bookmarks if LLMs failed
+    if not chapters or not isinstance(chapters, list):
+        raw_bookmarks = doc.get_toc()
+        if raw_bookmarks:
+            print("[FALLBACK] Using native PDF bookmarks for Table of Contents...")
+            chapters = []
+            for idx, bm in enumerate(raw_bookmarks):
+                title = bm[1].strip()
+                m = re.search(r"(\d+)", title)
+                ch_num = int(m.group(1)) if m else (idx + 1)
+                chapters.append(
+                    {
+                        "chapter_number": ch_num,
+                        "title": title,
+                        "start_page": bm[2],
+                        "end_page": None,
+                    }
+                )
+
+    if not chapters or not isinstance(chapters, list):
         return [], toc_start_page
 
     # Validate and clean up chapters
@@ -527,14 +583,18 @@ def get_checkpoint_path(file_path: str) -> Path:
 
 
 def load_checkpoint(cache_path: Path) -> dict[int, dict]:
-    """Loads checkpoint cache. Returns dict of {pdf_page: page_dict}."""
+    """Loads checkpoint cache. Returns dict of {pdf_page: page_dict} for pages with non-empty text."""
     if not cache_path.exists():
         return {}
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             pages = data.get("pages", [])
-            return {p["pdf_page"]: p for p in pages if "pdf_page" in p}
+            return {
+                p["pdf_page"]: p
+                for p in pages
+                if "pdf_page" in p and p.get("text", "").strip()
+            }
     except Exception as e:
         print(f"[WARNING] Could not read checkpoint cache: {e}. Starting fresh.")
         return {}
@@ -585,28 +645,29 @@ def get_extracted_path(file_path: str) -> Path:
     return EXTRACTED_DIR / f"{clean_stem}.json"
 
 
-def save_extracted_dataset(file_path: str, pages: list[dict]) -> Path:
-    """Saves the final extracted textbook pages permanently to data/extracted/<clean_stem>.json."""
+def save_extracted_dataset(file_path: str, dataset: dict | list[dict]) -> Path:
+    """Saves the final extracted textbook dataset permanently to data/extracted/<clean_stem>.json."""
     out_path = get_extracted_path(file_path)
     temp_path = out_path.with_suffix(".tmp")
     with open(temp_path, "w", encoding="utf-8") as f:
-        json.dump(pages, f, ensure_ascii=False, indent=2)
+        json.dump(dataset, f, ensure_ascii=False, indent=2)
     temp_path.replace(out_path)
+    page_count = len(dataset["pages"]) if isinstance(dataset, dict) else len(dataset)
     print(
-        f"\n[DATASET] Saved permanent textbook dataset ({len(pages)} pages) to: {out_path}"
+        f"\n[DATASET] Saved permanent textbook dataset ({page_count} pages) to: {out_path}"
     )
     return out_path
 
 
-def load_extracted_dataset(file_path: str) -> list[dict] | None:
+def load_extracted_dataset(file_path: str) -> dict | list[dict] | None:
     """Loads permanent extracted dataset if it already exists."""
     out_path = get_extracted_path(file_path)
     if out_path.exists():
         try:
             with open(out_path, "r", encoding="utf-8") as f:
-                pages = json.load(f)
-                if isinstance(pages, list) and len(pages) > 0:
-                    return pages
+                data = json.load(f)
+                if (isinstance(data, dict) and data.get("pages")) or (isinstance(data, list) and len(data) > 0):
+                    return data
         except Exception as e:
             print(f"[WARNING] Could not load extracted dataset from {out_path}: {e}")
     return None

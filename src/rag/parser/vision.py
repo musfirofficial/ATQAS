@@ -11,7 +11,10 @@ VISION_PROMPT = vision_prompt()
 
 
 def transcribe_page_with_gemini(
-    image_bytes: bytes, page_num: int, max_retries: int = 3
+    image_bytes: bytes,
+    page_num: int,
+    max_retries: int = 3,
+    mime_type: str = "image/jpeg",
 ) -> str:
     """
     Sends a page image to Gemini Flash Lite for structured Markdown transcription.
@@ -28,7 +31,7 @@ def transcribe_page_with_gemini(
                     {"text": VISION_PROMPT},
                     {
                         "inline_data": {
-                            "mime_type": "image/png",
+                            "mime_type": mime_type,
                             "data": b64_image,
                         }
                     },
@@ -48,7 +51,7 @@ def transcribe_page_with_gemini(
 
     for attempt in range(max_retries):
         try:
-            with httpx.Client(http2=True, timeout=60.0) as client:
+            with httpx.Client(http2=False, timeout=60.0) as client:
                 response = client.post(
                     GEMINI_API_URL,
                     json=payload,
@@ -94,12 +97,19 @@ def transcribe_page_with_gemini(
             data = response.json()
             candidates = data.get("candidates", [])
             if not candidates:
-                print(f"\n[WARNING] Gemini returned no content for page {page_num}.")
-                return ""
+                raise VisionAPIError(
+                    f"Gemini returned no candidates for page {page_num}: {data}"
+                )
 
             parts = candidates[0].get("content", {}).get("parts", [])
-            text = "".join(p.get("text", "") for p in parts)
-            return text.strip()
+            text = "".join(p.get("text", "") for p in parts).strip()
+            if not text:
+                finish_reason = candidates[0].get("finishReason", "EMPTY")
+                raise VisionAPIError(
+                    f"Gemini returned empty text for page {page_num} (finishReason: {finish_reason})"
+                )
+
+            return text
 
         except (QuotaExceededError, ConfigError):
             raise

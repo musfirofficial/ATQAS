@@ -13,6 +13,7 @@ from rag.core.exceptions import (
 from .util import (
     TOC_EXTRA_PAGES,
     classify_page,
+    clean_text,
     extract_digital_page_markdown,
     extract_printed_page_number,
     extract_table_of_contents,
@@ -39,6 +40,7 @@ def parse_and_prepare_textbook(
     subject: str | None = None,
     medium: str = "english",
     edition: int | str | None = None,
+    title: str | None = None,
     auto_ingest: bool = False,
     include_images: bool = True,
     toc_extra_pages: int = TOC_EXTRA_PAGES,
@@ -64,11 +66,16 @@ def parse_and_prepare_textbook(
     if not force_reextract:
         saved_dataset = load_extracted_dataset(str(path_obj))
         if saved_dataset:
+            page_count = (
+                len(saved_dataset["pages"])
+                if isinstance(saved_dataset, dict)
+                else len(saved_dataset)
+            )
             print("\n" + "=" * 65)
             print(f"  DATASET FOUND: {get_extracted_path(str(path_obj)).name}")
             print("=" * 65)
             print(
-                f"[DATASET] Loaded {len(saved_dataset)} pages instantly from disk ($0 API cost, 0s).\n"
+                f"[DATASET] Loaded {page_count} pages instantly from disk ($0 API cost, 0s).\n"
             )
             return saved_dataset
 
@@ -241,8 +248,8 @@ def parse_and_prepare_textbook(
         pdf_page = p_idx + 1
         classification = page_classifications[p_idx]
 
-        # 1. Resume from Checkpoint if already extracted
-        if pdf_page in cached_pages:
+        # 1. Resume from Checkpoint if already extracted with valid text
+        if pdf_page in cached_pages and cached_pages[pdf_page].get("text", "").strip():
             cached_record = cached_pages[pdf_page]
             extracted_pages.append(cached_record)
             ch_num = cached_record.get("chapter_number")
@@ -281,11 +288,15 @@ def parse_and_prepare_textbook(
         if classification["is_visual"] and not classification.get(
             "is_front_matter", False
         ):
-            # Render page to PNG bytes for Gemini Vision
+            # Render page to JPEG bytes for Gemini Vision (~90% smaller than PNG to prevent broken pipes)
             try:
                 pix = page.get_pixmap(dpi=150)
-                image_bytes = pix.tobytes("png")
-                page_text = transcribe_page_with_gemini(image_bytes, page_num=pdf_page)
+                image_bytes = pix.tobytes("jpeg", jpg_quality=85)
+                page_text = transcribe_page_with_gemini(
+                    image_bytes, page_num=pdf_page, mime_type="image/jpeg"
+                )
+                if not page_text or not page_text.strip():
+                    raise VisionAPIError(f"Gemini returned empty text for page {pdf_page}")
                 extraction_method = "gemini_vision"
             except (QuotaExceededError, ConfigError):
                 doc.close()
@@ -297,6 +308,8 @@ def parse_and_prepare_textbook(
                     f"Falling back to local digital extraction."
                 )
                 page_text = extract_digital_page_markdown(doc, page)
+                if not page_text or not page_text.strip():
+                    page_text = clean_text(page.get_text())
                 extraction_method = "digital_fallback"
             except Exception as e:
                 print(
@@ -304,32 +317,20 @@ def parse_and_prepare_textbook(
                     f"Falling back to local digital extraction."
                 )
                 page_text = extract_digital_page_markdown(doc, page)
+                if not page_text or not page_text.strip():
+                    page_text = clean_text(page.get_text())
                 extraction_method = "digital_fallback"
         else:
             page_text = extract_digital_page_markdown(doc, page)
+            if not page_text or not page_text.strip():
+                page_text = clean_text(page.get_text())
             extraction_method = "digital"
 
-        # If include_images is False, raster images are not routed to Gemini Vision for transcription;
-        # only vector drawings (diagrams, flowcharts, charts) represent transcribed figures.
-        has_figures = (
-            classification["has_drawings"]
-            if not include_images
-            else (classification["has_images"] or classification["has_drawings"])
-        )
-
         page_record = {
-            "document_name": path_obj.name,
-            "grade": grade,
-            "subject": subject,
-            "medium": medium,
-            "edition": edition,
             "pdf_page": pdf_page,
             "book_page": book_page,
             "chapter_number": chapter_num,
             "chapter_title": chapter_title,
-            "has_figures": has_figures,
-            "has_tables": classification["has_tables"],
-            "extraction_method": extraction_method,
             "text": page_text,
         }
         extracted_pages.append(page_record)
@@ -352,5 +353,17 @@ def parse_and_prepare_textbook(
 
     # Once 100% completed successfully, delete the checkpoint cache and save permanent dataset
     remove_checkpoint(cache_path)
-    save_extracted_dataset(str(path_obj), extracted_pages)
+    final_dataset = {
+        "metadata": {
+            "title": title or path_obj.stem,
+            "grade": grade,
+            "subject": subject,
+            "medium": medium,
+            "edition": str(edition) if edition is not None else None,
+            "total_pages": total_pages,
+        },
+        "pages": extracted_pages,
+    }
+    save_extracted_dataset(str(path_obj), final_dataset)
     print(f"\n[SUCCESS] Successfully extracted {len(extracted_pages)} pages.\n")
+    return final_dataset

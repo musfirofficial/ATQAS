@@ -2,18 +2,30 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-# Routes
-from db.session import engine, init_db
+from src.api.v1 import textbook_router
+from src.db.session import engine, init_db
 
 
-# Upon application startup, initialize the database
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize database tables on startup
     await init_db()
-    yield  # Yield control back to FastAPI to continue with the application lifecycle
-    await engine.dispose()  # Dispose of the engine when the app shuts down
+    yield
+    # Dispose engine connections on shutdown
+    await engine.dispose()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="TextbookMind API",
+    description="Academic RAG system for intelligent textbook learning.",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
-# app.include_router(textbook_router)
+# Register API v1 Routers
+app.include_router(textbook_router, prefix="/api/v1")
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {"status": "healthy", "service": "TextbookMind API"}

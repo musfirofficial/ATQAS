@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Any
 
 from llama_index.core.schema import TextNode
@@ -12,8 +13,15 @@ from .embedding import (
 )
 
 # ==============================================================================
+# ==============================================================================
 # Create or Recreate Qdrant Client
 # ==============================================================================
+import sys
+
+_client_cache: dict[str, QdrantClient] = getattr(sys, "_qdrant_client_cache", None)
+if _client_cache is None:
+    _client_cache = {}
+    sys._qdrant_client_cache = _client_cache
 
 
 def get_qdrant_client(
@@ -34,9 +42,16 @@ def get_qdrant_client(
     if url or env_url:
         return QdrantClient(url=url or env_url, api_key=api_key or env_api_key)
 
+    cache_key = str(path)
+    if cache_key in _client_cache:
+        return _client_cache[cache_key]
+
     if path:
+        path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
-    return QdrantClient(path=str(path))
+    client = QdrantClient(path=str(path))
+    _client_cache[cache_key] = client
+    return client
 
 
 # ==============================================================================
@@ -85,6 +100,7 @@ def init_textbook_collection(
             ("edition", models.PayloadSchemaType.KEYWORD),
             ("chapter_number", models.PayloadSchemaType.INTEGER),
             ("book_page", models.PayloadSchemaType.INTEGER),
+            ("title", models.PayloadSchemaType.KEYWORD),
             ("document_name", models.PayloadSchemaType.KEYWORD),
         ]
         import warnings

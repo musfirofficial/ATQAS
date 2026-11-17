@@ -15,7 +15,7 @@ def _format_context(points: list) -> tuple[str, list[dict]]:
     for idx, p in enumerate(points, 1):
         meta = p.payload or {}
         chunk_id = meta.get("chunk_id", "")
-        doc = (
+        book_title = meta.get("title") or (
             chunk_id.rsplit("_p", 1)[0]
             if "_p" in chunk_id
             else meta.get("document_name", "Textbook")
@@ -25,12 +25,13 @@ def _format_context(points: list) -> tuple[str, list[dict]]:
         page = meta.get("book_page")
 
         blocks.append(
-            f"[Source {idx} | {doc} | Chapter {ch_num}: {ch_title} | Book Page {page}]\n{meta.get('text', '')}"
+            f"[Source {idx} | {book_title} | Chapter {ch_num}: {ch_title} | Book Page {page}]\n{meta.get('text', '')}"
         )
         citations.append(
             {
                 "source": idx,
-                "document": doc,
+                "title": book_title,
+                "document": book_title,
                 "chapter_number": ch_num,
                 "chapter_title": ch_title,
                 "book_page": page,

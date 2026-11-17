@@ -22,6 +22,13 @@ def main():
         help="Path to the source PDF textbook file.",
     )
     parser.add_argument(
+        "--title",
+        "-t",
+        type=str,
+        default=None,
+        help="Human-readable textbook title (e.g. 'Science Grade 10 Part 1'). Inferred if omitted.",
+    )
+    parser.add_argument(
         "--grade",
         type=int,
         default=None,
@@ -48,7 +55,7 @@ def main():
     parser.add_argument(
         "--auto-ingest",
         action="store_true",
-        default=True,
+        default=False,
         help="Automatically proceed without interactive confirmation prompt.",
     )
     parser.add_argument(
@@ -88,6 +95,7 @@ def main():
     # 1. Parse and extract textbook pages
     extracted_pages = parse_and_prepare_textbook(
         file_path=str(pdf_path),
+        title=args.title,
         grade=args.grade,
         subject=args.subject,
         medium=args.medium,
@@ -97,8 +105,12 @@ def main():
         force_reextract=args.force_reextract,
     )
 
-    clean_stem = pdf_path.stem
-    extracted_json_path = ROOT_PATH / "data" / "extracted" / f"{clean_stem}.json"
+    if not extracted_pages:
+        print("\n[INFO] Extraction was cancelled or returned 0 pages. Exiting cleanly.\n")
+        sys.exit(0)
+
+    from rag.parser.util import get_extracted_path
+    extracted_json_path = get_extracted_path(str(pdf_path))
 
     # 2. Chunk textbook dataset
     print(f"\n[CHUNKING] Generating chunks from '{extracted_json_path.name}'...")
@@ -106,11 +118,17 @@ def main():
         dataset_path=str(extracted_json_path),
         chunk_size=args.chunk_size,
         overlap=args.overlap,
+        title=args.title,
     )
 
+    page_count = (
+        len(extracted_pages["pages"])
+        if isinstance(extracted_pages, dict)
+        else len(extracted_pages)
+    )
     print("\n" + "=" * 65)
     print(f"✅ STEP 1 COMPLETE: {pdf_path.name}")
-    print(f"   • Extracted Pages: {len(extracted_pages)}")
+    print(f"   • Extracted Pages: {page_count}")
     print(f"   • Generated Chunks: {len(chunks)}")
     print(f"   • Saved Dataset:   {extracted_json_path}")
     print(
