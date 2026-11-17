@@ -50,13 +50,10 @@ class TextBook(Base):
     )
     status: Mapped[TextBookStatus] = mapped_column(default=TextBookStatus.READY)
     title: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    path: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     grade: Mapped[int | None] = mapped_column(Integer, nullable=True)
     subject: Mapped[str | None] = mapped_column(String(100), nullable=True)
     medium: Mapped[str] = mapped_column(String(50), default="english")
     edition: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    collection_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    total_pages: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(local_tz)
     )

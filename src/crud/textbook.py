@@ -1,36 +1,18 @@
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.models import TextBook, TextBookStatus
+from src.db.models import TextBook
+from src.schema.textbook import TextBokCreate
 
 
 async def create_textbook_record(
-    db: AsyncSession,
-    title: str,
-    total_pages: int,
-    collection_name: str,
-    grade: int | None = None,
-    subject: str | None = None,
-    medium: str = "english",
-    edition: str | None = None,
-    path: str | None = None,
-    status: TextBookStatus = TextBookStatus.READY,
+    db: AsyncSession, textbook_in: TextBokCreate
 ) -> TextBook:
     """Inserts a new textbook record into the SQL database."""
-    new_textbook = TextBook(
-        title=title,
-        total_pages=total_pages,
-        collection_name=collection_name,
-        grade=grade,
-        subject=subject,
-        medium=medium,
-        edition=str(edition) if edition is not None else None,
-        path=path,
-        status=status,
-    )
+    new_textbook = TextBook(**textbook_in.model_dump())
     db.add(new_textbook)
     await db.commit()
     await db.refresh(new_textbook)
@@ -66,3 +48,8 @@ async def get_textbook_by_title(
     stmt = select(TextBook).where(TextBook.title == title)
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def delete_textbook_by_id(db: AsyncSession, textbook_id: uuid.UUID) -> None:
+    stmt = delete(TextBook).where(TextBook.id == textbook_id)
+    await db.execute(stmt)

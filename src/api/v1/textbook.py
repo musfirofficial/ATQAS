@@ -18,9 +18,14 @@ from src.crud.textbook import (
 )
 from src.db.models import TextBookStatus
 from src.db.session import get_session
-from src.schema.textbook import TextBookDatasetCreate, TextBookResponse
+from src.schema.textbook import TextBookResponse
 
 router = APIRouter(prefix="/textbooks", tags=["Textbooks"])
+
+
+# ==============================================================================
+# Embed and store uploaded dataset
+# ==============================================================================
 
 
 @router.post(
@@ -117,7 +122,9 @@ async def upload_textbook_dataset(
             detail=f"Vector store indexing failed: {e}",
         )
 
-    # ── 3. Create Row in SQL DB ────────────────────────────────
+    # --------------------------------------------------------------------------
+    # 3. Create Row in SQL DB
+    # --------------------------------------------------------------------------
     total_pages = meta.get("total_pages", len(pages))
     book = await create_textbook_record(
         db=db,
@@ -135,82 +142,9 @@ async def upload_textbook_dataset(
     return book
 
 
-@router.post(
-    "/",
-    response_model=TextBookResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register and index a textbook from a JSON dataset payload",
-)
-async def create_textbook_from_json(
-    payload: TextBookDatasetCreate,
-    db: AsyncSession = Depends(get_session),
-):
-    """
-    Direct JSON payload ingestion:
-    1. Checks if title already exists in SQL.
-    2. Chunks and embeds pages into Qdrant.
-    3. Saves record to SQL.
-    """
-    # ── 1. Fast SQL Check ──────────────────────────────────────
-    existing = await get_textbook_by_title(db, title=payload.title)
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Textbook '{payload.title}' is already registered in the database.",
-        )
-
-    if not payload.pages:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Payload contains no page records.",
-        )
-
-    # ── 2. Chunk, Embed & Store in Qdrant ──────────────────────
-    try:
-        dataset_input = {
-            "metadata": {
-                "title": payload.title,
-                "grade": payload.grade,
-                "subject": payload.subject,
-                "medium": payload.medium,
-                "edition": payload.edition,
-            },
-            "pages": payload.pages,
-        }
-        chunks = create_chunks_from_dataset(dataset_input, title=payload.title)
-        if not chunks:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No chunks could be produced from pages.",
-            )
-
-        qdrant_client = get_qdrant_client()
-        upsert_chunks(
-            chunks=chunks,
-            client=qdrant_client,
-            collection_name=DEFAULT_COLLECTION_NAME,
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Vector store indexing failed: {e}",
-        )
-
-    # ── 3. Create Row in SQL DB ────────────────────────────────
-    book = await create_textbook_record(
-        db=db,
-        title=payload.title,
-        total_pages=len(payload.pages),
-        collection_name=DEFAULT_COLLECTION_NAME,
-        grade=payload.grade,
-        subject=payload.subject,
-        medium=payload.medium,
-        edition=str(payload.edition) if payload.edition is not None else None,
-        path=payload.path,
-        status=TextBookStatus.READY,
-    )
-
-    return book
+# ==============================================================================
+# Get all textboks
+# ==============================================================================
 
 
 @router.get(
@@ -225,6 +159,11 @@ async def list_textbooks(
 ):
     """Retrieve all textbooks registered in the catalog."""
     return await get_textbooks(db=db, skip=skip, limit=limit)
+
+
+# ==============================================================================
+# Get Details for given textbook
+# ==============================================================================
 
 
 @router.get(
